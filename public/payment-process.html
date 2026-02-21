@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Payment · 5ice</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', sans-serif;
+        }
+        body {
+            background: #f8fafc;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: white;
+            border-radius: 40px;
+            padding: 40px;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        h1 {
+            font-size: 2rem;
+            color: #0f172a;
+            margin-bottom: 20px;
+        }
+        .spinner {
+            border: 4px solid #e2e8f0;
+            border-top: 4px solid #0284c7;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        .product-list {
+            text-align: left;
+            margin: 20px 0;
+            background: #f1f5f9;
+            padding: 20px;
+            border-radius: 20px;
+        }
+        .product-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+        }
+        .badge {
+            background: #0284c7;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 20px;
+            font-size: 0.8rem;
+        }
+        .paid {
+            color: #10b981;
+            font-weight: 600;
+        }
+        .pending {
+            color: #f59e0b;
+        }
+        .redirect-message {
+            margin-top: 20px;
+            color: #475569;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1><i class="fas fa-credit-card"></i> Payment in Progress</h1>
+        <div id="statusMessage">
+            Preparing your payment...
+        </div>
+        <div class="spinner"></div>
+        <div id="productList" class="product-list"></div>
+        <div id="redirectMessage" class="redirect-message"></div>
+    </div>
+
+    <script>
+        let pendingPayments = JSON.parse(localStorage.getItem('pendingPayments') || '[]');
+
+        function redirectToNext() {
+            const next = pendingPayments.find(p => !p.paid);
+            if (next) {
+                window.location.href = next.storefrontLink;
+            } else {
+                localStorage.removeItem('pendingPayments');
+                window.location.href = '/purchases';
+            }
+        }
+
+        async function checkPurchases() {
+            try {
+                const res = await fetch('/api/user/purchases');
+                if (!res.ok) return;
+                const newPurchases = await res.json();
+                const purchaseMap = {};
+                newPurchases.forEach(p => {
+                    purchaseMap[p.productId] = (purchaseMap[p.productId] || 0) + 1;
+                });
+
+                let changed = false;
+                pendingPayments = pendingPayments.map(item => {
+                    if (!item.paid) {
+                        const paidCount = purchaseMap[item.productId] || 0;
+                        const paidSoFar = pendingPayments.filter(p => p.productId === item.productId && p.paid).length;
+                        if (paidCount > paidSoFar) {
+                            item.paid = true;
+                            changed = true;
+                        }
+                    }
+                    return item;
+                });
+
+                if (changed) {
+                    localStorage.setItem('pendingPayments', JSON.stringify(pendingPayments));
+                    updateUI();
+                    const currentProductId = new URLSearchParams(window.location.search).get('productId');
+                    if (currentProductId) {
+                        const currentItem = pendingPayments.find(p => p.productId === currentProductId && !p.paid);
+                        if (!currentItem) setTimeout(redirectToNext, 1500);
+                    } else {
+                        if (!pendingPayments.some(p => !p.paid)) setTimeout(redirectToNext, 1500);
+                    }
+                }
+            } catch (err) {
+                console.error('Polling error', err);
+            }
+        }
+
+        function updateUI() {
+            const productListDiv = document.getElementById('productList');
+            const pendingCount = pendingPayments.filter(p => !p.paid).length;
+            const total = pendingPayments.length;
+            const paidCount = total - pendingCount;
+
+            let html = `<p><strong>Progress:</strong> ${paidCount} of ${total} paid</p>`;
+            pendingPayments.forEach((item, index) => {
+                html += `<div class="product-item">
+                <span>${item.productTitle}</span>
+                <span class="${item.paid ? 'paid': 'pending'}">${item.paid ? '✓ Paid': '⏳ Pending'}</span>
+                </div>`;
+            });
+            productListDiv.innerHTML = html;
+
+            if (pendingCount === 0) {
+                document.getElementById('redirectMessage').innerText = 'All payments complete! Redirecting...';
+                setTimeout(redirectToNext, 2000);
+            } else {
+                document.getElementById('redirectMessage').innerText = `Redirecting to next payment...`;
+            }
+        }
+
+        setInterval(checkPurchases, 3000);
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const productIdParam = urlParams.get('productId');
+        if (!productIdParam && pendingPayments.length > 0) {
+            redirectToNext();
+        } else {
+            updateUI();
+            checkPurchases();
+        }
+    </script>
+</body>
+</html>
