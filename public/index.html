@@ -1266,6 +1266,7 @@
     let displayedCount = 7;
     let slideshowModal = null;
     let searchVisible = false;
+    let usingFirestore = false; // track which mode we're in
 
     // DOM elements
     const authLinks = document.getElementById('authLinks');
@@ -1285,54 +1286,109 @@
     const seeMoreBtn = document.getElementById('seeMoreBtn');
     const logoutFooterLink = document.getElementById('logoutFooterLink');
 
-    // ========== FIRESTORE REAL‑TIME PRODUCTS ==========
-    db.collection('products').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
-        products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        displayedCount = 7;
-        renderProductGrid();
-        updateCartUI();
-    }, error => {
-        console.error('Firestore error:', error);
-    });
+    // ========== ATTEMPT FIRESTORE, FALL BACK TO POLLING ==========
+    function startFirestoreListener() {
+        if (typeof db === 'undefined') {
+            console.warn('Firestore not available, falling back to polling.');
+            fallbackToPolling();
+            return;
+        }
+        db.collection('products').limit(1).get().then(() => {
+            console.log('Firestore connected, using real-time updates.');
+            usingFirestore = true;
+            db.collection('products').orderBy('createdAt', 'desc').onSnapshot(snapshot => {
+                products = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderProductGrid();
+                updateCartUI();
+            }, error => {
+                console.error('Firestore listener error:', error);
+                fallbackToPolling();
+            });
+        }).catch(error => {
+            console.error('Firestore test failed, falling back to polling:', error);
+            fallbackToPolling();
+        });
+    }
+
+    function fallbackToPolling() {
+        console.log('Using polling fallback (every 30 seconds).');
+        usingFirestore = false;
+        fetchProducts();
+        setInterval(fetchProducts, 30000); // 30 seconds
+    }
+
+    async function fetchProducts() {
+        try {
+            const res = await fetch('/api/products');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            products = await res.json();
+            renderProductGrid();
+            updateCartUI();
+        } catch (err) {
+            console.error('Fetch error:', err);
+            document.getElementById('productsGridContainer').innerHTML = 
+                '<div class="no-products"><i class="fas fa-exclamation-triangle"></i><br />Failed to load products. Please try again later.</div>';
+        }
+    }
+
+    // Start the hybrid loader
+    if (typeof db !== 'undefined') {
+        startFirestoreListener();
+    } else {
+        fallbackToPolling();
+    }
 
     // ========== FIREBASE AUTH STATE ==========
-    auth.onAuthStateChanged(async (firebaseUser) => {
-        if (firebaseUser) {
-            try {
-                const token = await firebaseUser.getIdToken();
-                const res = await fetch('/api/user/me', {
-                    headers: { 'Authorization': `Bearer ${token}` }
+    if (typeof auth !== 'undefined') {
+        auth.onAuthStateChanged(async (firebaseUser) => {
+            if (firebaseUser) {
+                try {
+                    const token = await firebaseUser.getIdToken();
+                    const res = await fetch('/api/user/me', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    const data = await res.json();
+                    user = { id: firebaseUser.uid, name: data.name || firebaseUser.displayName, email: firebaseUser.email };
+                } catch (err) {
+                    user = { id: firebaseUser.uid, name: firebaseUser.displayName, email: firebaseUser.email };
+                }
+                authLinks.innerHTML = `
+                    <span>Hi, ${user.name}</span>
+                    <span>|</span>
+                    <a href="/purchases">My Purchases</a>
+                    <span>|</span>
+                    <a href="#" id="logoutLink" style="color:#ef4444;">Logout</a>
+                `;
+                document.getElementById('logoutLink').addEventListener('click', async (e) => {
+                    e.preventDefault();
+                    await auth.signOut();
+                    location.reload();
                 });
-                const data = await res.json();
-                user = { id: firebaseUser.uid, name: data.name || firebaseUser.displayName, email: firebaseUser.email };
-            } catch (err) {
-                user = { id: firebaseUser.uid, name: firebaseUser.displayName, email: firebaseUser.email };
+                logoutFooterLink.style.display = 'inline';
+            } else {
+                user = null;
+                authLinks.innerHTML = `
+                    <a href="#" id="loginLink">Login</a>
+                    <span>|</span>
+                    <a href="#" id="signupLink" class="signup-btn">Sign Up</a>
+                `;
+                document.getElementById('loginLink').addEventListener('click', (e) => { e.preventDefault(); openLoginModal(); });
+                document.getElementById('signupLink').addEventListener('click', (e) => { e.preventDefault(); openSignupModal(); });
+                logoutFooterLink.style.display = 'none';
             }
-            authLinks.innerHTML = `
-                <span>Hi, ${user.name}</span>
-                <span>|</span>
-                <a href="/purchases">My Purchases</a>
-                <span>|</span>
-                <a href="#" id="logoutLink" style="color:#ef4444;">Logout</a>
-            `;
-            document.getElementById('logoutLink').addEventListener('click', async (e) => {
-                e.preventDefault();
-                await auth.signOut();
-                location.reload();
-            });
-            logoutFooterLink.style.display = 'inline';
-        } else {
-            user = null;
-            authLinks.innerHTML = `
-                <a href="#" id="loginLink">Login</a>
-                <span>|</span>
-                <a href="#" id="signupLink" class="signup-btn">Sign Up</a>
-            `;
-            document.getElementById('loginLink').addEventListener('click', (e) => { e.preventDefault(); openLoginModal(); });
-            document.getElementById('signupLink').addEventListener('click', (e) => { e.preventDefault(); openSignupModal(); });
-            logoutFooterLink.style.display = 'none';
-        }
-    });
+        });
+    } else {
+        // No Firebase Auth, just show logged out state
+        user = null;
+        authLinks.innerHTML = `
+            <a href="#" id="loginLink">Login</a>
+            <span>|</span>
+            <a href="#" id="signupLink" class="signup-btn">Sign Up</a>
+        `;
+        document.getElementById('loginLink').addEventListener('click', (e) => { e.preventDefault(); openLoginModal(); });
+        document.getElementById('signupLink').addEventListener('click', (e) => { e.preventDefault(); openSignupModal(); });
+        logoutFooterLink.style.display = 'none';
+    }
 
     // ========== CART FUNCTIONS ==========
     function addToCart(productId) {
@@ -1368,7 +1424,7 @@
         updateCartUI();
     }
 
-    // ========== RENDER PRODUCT GRID ==========
+    // ========== RENDER PRODUCT GRID (with image fallback) ==========
     function renderProductGrid() {
         const filtered = products.filter(p => {
             if (currentCategory !== 'all' && p.category !== currentCategory) return false;
@@ -1402,7 +1458,7 @@
             if (imageCount > 0) {
                 html += `<div class="${collageClass}" data-id="${p.id}">`;
                 for (let i = 0; i < Math.min(p.images.length, 4); i++) {
-                    html += `<img src="${p.images[i]}" alt="${p.title} ${i+1}" loading="lazy">`;
+                    html += `<img src="${p.images[i]}" alt="${p.title} ${i+1}" loading="lazy" onerror="this.src='https://via.placeholder.com/400x400?text=No+Image'">`;
                 }
                 html += `</div>`;
             } else {
@@ -1749,7 +1805,7 @@
                     <div class="image-counter">${index+1} / ${total}</div>
                     <div class="slideshow-image-container">
                         <button class="nav-arrow prev-arrow"><i class="fas fa-chevron-left"></i></button>
-                        <img src="${product.images[index]}" alt="large view">
+                        <img src="${product.images[index]}" alt="large view" onerror="this.src='https://via.placeholder.com/600x600?text=No+Image'">
                         <button class="nav-arrow next-arrow"><i class="fas fa-chevron-right"></i></button>
                     </div>
                     <button class="back-to-collage"><i class="fas fa-arrow-left"></i> Back</button>
