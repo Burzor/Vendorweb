@@ -1214,7 +1214,7 @@
         </div>
     </footer>
 
- <script>
+<script>
     // ========== CUSTOM MODAL FUNCTIONS ==========
     function showAlert(message, title = 'Notice') {
         return new Promise(resolve => {
@@ -1314,7 +1314,7 @@
         console.log('Using polling fallback (every 30 seconds).');
         usingFirestore = false;
         fetchProducts();
-        setInterval(fetchProducts, 30000); // 30 seconds
+        setInterval(fetchProducts, 45000); // 30 seconds
     }
 
     async function fetchProducts() {
