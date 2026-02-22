@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Firebase Test</title>
+</head>
+<body>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js"></script>
+    <script>
+        console.log('firebase global:', typeof firebase);
+        if (typeof firebase !== 'undefined') {
+            console.log('Firebase apps:', firebase.apps.length);
+        }
+    </script>
+</body>
+</html>
