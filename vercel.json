@@ -7,9 +7,5 @@
     { "source": "/purchases", "destination": "/purchases.html" },
     { "source": "/payment-process", "destination": "/payment-process.html" },
     { "source": "/payment-return", "destination": "/payment-return.html" }
-  ],
-  "env": {
-    "FIREBASE_SERVICE_ACCOUNT": "@firebase-service-account",
-    "PAYSTACK_SECRET_KEY": "@paystack-secret-key"
-  }
+  ]
 }
